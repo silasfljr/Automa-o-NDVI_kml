@@ -8,6 +8,8 @@ import os
 import json
 import shapely.wkb
 from datetime import datetime, timedelta
+# Novo import necessário para a exibição robusta
+from streamlit_folium import st_folium
 
 # --- AUTENTICAÇÃO EARTH ENGINE ---
 def authenticate_ee():
@@ -49,7 +51,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Função sem @st.cache_data para evitar erro UnhashableParamError com KML
+# Função para tratar geometria
 def force_2d_geometry(geom):
     """Remove coordenada Z das geometrias"""
     if getattr(geom, "has_z", False):
@@ -124,12 +126,10 @@ if st.sidebar.button("🚀 GERAR MAPA NDVI", type="primary", use_container_width
                 c2.metric("NDVI Médio", round(ndvi_stats.get('NDVI_mean', 0), 3))
                 c3.metric("NDVI Máx", round(ndvi_stats.get('NDVI_max', 0), 3))
 
-                st.divider() # Adiciona uma linha divisória
+                st.divider()
 
                 # --- CONFIGURAÇÃO DO MAPA ---
                 Map = geemap.Map()
-                
-                # Centralizamos na geometria do KML
                 Map.centerObject(kml_ee, 14)
                 
                 # Adicionamos as camadas
@@ -137,8 +137,10 @@ if st.sidebar.button("🚀 GERAR MAPA NDVI", type="primary", use_container_width
                 Map.addLayer(ndvi, {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}, 'NDVI')
                 Map.addLayer(kml_ee, {'color': '0000FF'}, 'Área KML')
                 
-                # Exibição robusta para Streamlit
-                Map.to_streamlit(height=600, scrolling=True)
+                # EXIBIÇÃO ROBUSTA COM ST_FOLIUM
+                # Resolve o erro de "Invalid URL" no console do navegador
+                st_folium(Map, width=1000, height=600, returned_objects=[])
+                
             else:
                 st.error("Nenhuma imagem sem nuvens encontrada no período.")
     else:
