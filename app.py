@@ -126,7 +126,7 @@ if st.sidebar.button("🚀 GERAR ANÁLISE COMPLETA", type="primary", use_contain
     else:
         st.warning("Faça o upload do KML.")
 
-# --- EXIBIÇÃO DOS RESULTADOS (Recuperando da Session State) ---
+# --- EXIBIÇÃO DOS RESULTADOS ---
 if 'dados' in st.session_state:
     d = st.session_state['dados']
     area_ha = calcular_area_hectares(d['kml_ee'])
@@ -144,19 +144,19 @@ if 'dados' in st.session_state:
     tab1, tab2 = st.tabs(["🔍 Monitoramento", "🎯 Zoneamento"])
 
     with tab1:
-        m = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
-        folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google', name='Satellite').add_to(m)
+        m1 = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
+        folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google', name='Satellite').add_to(m1)
 
         def add_layer(obj, vis, name, m_obj):
             map_id = ee.Image(obj).getMapId(vis)
             folium.raster_layers.TileLayer(tiles=map_id['tile_fetcher'].url_format, attr='EE', name=name, overlay=True).add_to(m_obj)
 
-        if id_indice == "NDVI": add_layer(d['ndvi'], {'min':0,'max':1,'palette':['red','yellow','green']}, 'NDVI', m)
-        elif id_indice == "EVI": add_layer(d['evi'], {'min':0,'max':1,'palette':['blue','yellow','green']}, 'EVI', m)
-        elif id_indice == "NDWI": add_layer(d['ndwi'], {'min':-1,'max':1,'palette':['brown','white','blue']}, 'NDWI', m)
-        else: add_layer(d['img_real'], {'bands':['B4','B3','B2'],'max':3000}, 'RGB', m)
+        if id_indice == "NDVI": add_layer(d['ndvi'], {'min':0,'max':1,'palette':['red','yellow','green']}, 'NDVI', m1)
+        elif id_indice == "EVI": add_layer(d['evi'], {'min':0,'max':1,'palette':['blue','yellow','green']}, 'EVI', m1)
+        elif id_indice == "NDWI": add_layer(d['ndwi'], {'min':-1,'max':1,'palette':['brown','white','blue']}, 'NDWI', m1)
+        else: add_layer(d['img_real'], {'bands':['B4','B3','B2'],'max':3000}, 'RGB', m1)
         
-        st_folium(m, width=1100, height=450, key="mapa_1")
+        st_folium(m1, width=1100, height=450, key="mapa_1")
 
         df_hist = gerar_series_temporais_completas(d['s2_col'], d['kml_ee'])
         if not df_hist.empty and id_indice != "RGB":
@@ -164,10 +164,14 @@ if 'dados' in st.session_state:
             st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
+        st.subheader("🎯 Zonas de Manejo")
         zonas_img, areas_z = gerar_zonas_manejo(d['ndvi'], d['kml_ee'])
         cz1, cz2, cz3 = st.columns(3)
         cz1.success(f"🟢 Alta: {areas_z[0]:.2f} ha")
         cz2.warning(f"🟡 Média: {areas_z[1]:.2f} ha")
         cz3.error(f"🔴 Baixa: {areas_z[2]:.2f} ha")
 
-        m2 = folium.Map(location=[centroid[1], centroid[0]], zoom
+        m2 = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
+        folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google', name='Satellite').add_to(m2)
+        add_layer(zonas_img, {'min':0,'max':2,'palette':['#2E7D32','#FBC02D','#D32F2F']}, 'Zonas', m2)
+        st_folium(m2, width=1100, height=450, key="mapa_2")
