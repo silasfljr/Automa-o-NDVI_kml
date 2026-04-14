@@ -8,7 +8,8 @@ import os
 import json
 import shapely.wkb
 from datetime import datetime, timedelta
-import streamlit.components.v1 as components
+import folium
+from streamlit_folium import st_folium
 
 # --- AUTENTICAÇÃO EARTH ENGINE ---
 def authenticate_ee():
@@ -29,21 +30,11 @@ def authenticate_ee():
 authenticate_ee()
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(
-    page_title="🌿 NDVI Mapper", 
-    page_icon="🌿",
-    layout="wide"
-)
+st.set_page_config(page_title="🌿 NDVI Mapper", page_icon="🌿", layout="wide")
 
-# CSS Customizado
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #2E7D32;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
+    .main-header { font-size: 2.5rem; color: #2E7D32; text-align: center; margin-bottom: 1rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -80,13 +71,8 @@ def processar_ndvi(kml_file, data_inicio, data_fim, limite_nuvens):
     ndvi = recent_image.normalizedDifference(['B8', 'B4']).rename('NDVI')
 
     ndvi_stats = ndvi.reduceRegion(
-        reducer=ee.Reducer.mean().combine(
-            reducer2=ee.Reducer.minMax(),
-            sharedInputs=True
-        ), 
-        geometry=kml_ee,
-        scale=10,
-        maxPixels=1e9
+        reducer=ee.Reducer.mean().combine(reducer2=ee.Reducer.minMax(), sharedInputs=True), 
+        geometry=kml_ee, scale=10, maxPixels=1e9
     ).getInfo()
 
     return kml_ee, ndvi, recent_image, ndvi_stats, img_count
@@ -99,17 +85,16 @@ uploaded_file = st.sidebar.file_uploader("📁 Upload KML", type="kml")
 col_d1, col_d2 = st.sidebar.columns(2)
 data_fim = col_d2.date_input("📅 Fim", value=datetime.now().date())
 data_inicio = col_d1.date_input("📅 Início", value=datetime.now().date() - timedelta(days=60))
-limite_nuvens = st.sidebar.slider("☁️ Limite Nuvens (%)", 0, 100, 20)
+limite_nuvens = st.sidebar.slider("☁️ Limite Nuvens (%)", 0, 100, 36)
 
 if st.sidebar.button("🚀 GERAR MAPA NDVI", type="primary", use_container_width=True):
     if uploaded_file:
-        with st.spinner("🔄 Processando imagens Sentinel-2..."):
+        with st.spinner("🔄 Processando imagens..."):
             kml_ee, ndvi, recent_image, ndvi_stats, img_count = processar_ndvi(
                 uploaded_file, data_inicio, data_fim, limite_nuvens
             )
             
             if kml_ee:
-                # --- MÉTRICAS ---
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Imagens", img_count)
                 c2.metric("NDVI Médio", round(ndvi_stats.get('NDVI_mean', 0), 3))
@@ -117,19 +102,33 @@ if st.sidebar.button("🚀 GERAR MAPA NDVI", type="primary", use_container_width
 
                 st.divider()
 
-                # --- CONFIGURAÇÃO DO MAPA ---
-                Map = geemap.Map()
-                Map.centerObject(kml_ee, 14)
-                Map.addLayer(recent_image, {'bands': ['B4', 'B3', 'B2'], 'max': 3000}, 'RGB (Natural)')
-                Map.addLayer(ndvi, {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}, 'NDVI')
-                Map.addLayer(kml_ee, {'color': '0000FF'}, 'Área KML')
+                # --- MAPA MANUAL COM FOLIUM (RESOLVE O ERRO DE URL) ---
+                # Pegar coordenadas centrais
+                centroid = kml_ee.geometry().centroid().coordinates().getInfo()
                 
-                # --- NOVO MÉTODO DE EXIBIÇÃO (HTML) ---
-                # Esta é a forma mais segura quando componentes interativos falham
-                map_html = Map.to_html() 
-                components.html(map_html, height=600)
+                # Criar mapa Folium nativo
+                m = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
+                folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
+                                 attr='Google', name='Google Satellite').add_to(m)
+
+                # Função para adicionar camadas do Earth Engine ao Folium
+                def add_ee_layer(ee_object, vis_params, name):
+                    map_id_dict = ee.Image(ee_object).getMapId(vis_params)
+                    folium.raster_layers.TileLayer(
+                        tiles=map_id_dict['tile_fetcher'].url_format,
+                        attr='Google Earth Engine',
+                        name=name,
+                        overlay=True, control=True
+                    ).add_to(m)
+
+                # Adicionar NDVI e Imagem Real
+                add_ee_layer(recent_image, {'bands': ['B4', 'B3', 'B2'], 'max': 3000}, 'RGB Natural')
+                add_ee_layer(ndvi, {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}, 'NDVI')
+
+                # Exibir o mapa
+                st_folium(m, width=1100, height=600, returned_objects=[])
                 
             else:
-                st.error("Nenhuma imagem sem nuvens encontrada no período.")
+                st.error("Nenhuma imagem encontrada.")
     else:
         st.warning("Aguardando arquivo KML...")
