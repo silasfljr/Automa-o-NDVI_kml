@@ -1,0 +1,8 @@
+streamlit
+earthengine-api
+geemap
+geopandas
+shapely
+pandas
+folium
+streamlit-folium
