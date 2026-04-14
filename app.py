@@ -8,8 +8,6 @@ import os
 import json
 import shapely.wkb
 from datetime import datetime, timedelta
-import folium
-from streamlit_folium import folium_static
 
 # --- AUTENTICAÇÃO EARTH ENGINE ---
 def authenticate_ee():
@@ -51,6 +49,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Função sem @st.cache_data para evitar erro UnhashableParamError com KML
 def force_2d_geometry(geom):
     """Remove coordenada Z das geometrias"""
     if getattr(geom, "has_z", False):
@@ -125,14 +124,15 @@ if st.sidebar.button("🚀 GERAR MAPA NDVI", type="primary", use_container_width
                 c2.metric("NDVI Médio", round(ndvi_stats.get('NDVI_mean', 0), 3))
                 c3.metric("NDVI Máx", round(ndvi_stats.get('NDVI_max', 0), 3))
 
-                # Mapa
+                # Mapa - Usando to_streamlit() para evitar AttributeError
                 Map = geemap.Map()
                 Map.centerObject(kml_ee, 14)
                 Map.addLayer(recent_image, {'bands': ['B4', 'B3', 'B2'], 'max': 3000}, 'RGB (Natural)')
                 Map.addLayer(ndvi, {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}, 'NDVI')
                 Map.addLayer(kml_ee, {'color': 'blue'}, 'Área KML')
                 
-                folium_static(Map, width=1000, height=600)
+                # Substituição do folium_static pelo método nativo do geemap
+                Map.to_streamlit(height=600)
             else:
                 st.error("Nenhuma imagem sem nuvens encontrada no período.")
     else:
