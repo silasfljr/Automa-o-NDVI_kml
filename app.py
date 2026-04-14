@@ -118,21 +118,27 @@ if st.sidebar.button("🚀 GERAR MAPA NDVI", type="primary", use_container_width
             )
             
             if kml_ee:
-                # Métricas
+                # --- MÉTRICAS ---
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Imagens", img_count)
                 c2.metric("NDVI Médio", round(ndvi_stats.get('NDVI_mean', 0), 3))
                 c3.metric("NDVI Máx", round(ndvi_stats.get('NDVI_max', 0), 3))
 
-                # Mapa - Usando to_streamlit() para evitar AttributeError
+                st.divider() # Adiciona uma linha divisória
+
+                # --- CONFIGURAÇÃO DO MAPA ---
                 Map = geemap.Map()
+                
+                # Centralizamos na geometria do KML
                 Map.centerObject(kml_ee, 14)
+                
+                # Adicionamos as camadas
                 Map.addLayer(recent_image, {'bands': ['B4', 'B3', 'B2'], 'max': 3000}, 'RGB (Natural)')
                 Map.addLayer(ndvi, {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}, 'NDVI')
-                Map.addLayer(kml_ee, {'color': 'blue'}, 'Área KML')
+                Map.addLayer(kml_ee, {'color': '0000FF'}, 'Área KML')
                 
-                # Substituição do folium_static pelo método nativo do geemap
-                Map.to_streamlit(height=600)
+                # Exibição robusta para Streamlit
+                Map.to_streamlit(height=600, scrolling=True)
             else:
                 st.error("Nenhuma imagem sem nuvens encontrada no período.")
     else:
