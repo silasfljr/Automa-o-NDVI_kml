@@ -8,14 +8,12 @@ import os
 import json
 import shapely.wkb
 from datetime import datetime, timedelta
-# Novo import necessário para a exibição robusta
-from streamlit_folium import st_folium
+import streamlit.components.v1 as components
 
 # --- AUTENTICAÇÃO EARTH ENGINE ---
 def authenticate_ee():
     try:
         if 'EE_KEYS' in st.secrets:
-            # Autenticação para Produção (Streamlit Cloud)
             ee_key_dict = json.loads(st.secrets['EE_KEYS'])
             credentials = ee.ServiceAccountCredentials(
                 ee_key_dict['client_email'], 
@@ -23,7 +21,6 @@ def authenticate_ee():
             )
             ee.Initialize(credentials)
         else:
-            # Autenticação para uso Local
             ee.Initialize()
     except Exception as e:
         st.error(f"Erro na autenticação do Earth Engine: {e}")
@@ -35,8 +32,7 @@ authenticate_ee()
 st.set_page_config(
     page_title="🌿 NDVI Mapper", 
     page_icon="🌿",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # CSS Customizado
@@ -51,31 +47,25 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Função para tratar geometria
 def force_2d_geometry(geom):
-    """Remove coordenada Z das geometrias"""
     if getattr(geom, "has_z", False):
         return shapely.wkb.loads(shapely.wkb.dumps(geom, output_dimension=2))
     return geom
 
 def processar_ndvi(kml_file, data_inicio, data_fim, limite_nuvens):
-    # Salvar KML temporariamente para leitura
     with tempfile.NamedTemporaryFile(suffix='.kml', delete=False) as tmp:
         tmp.write(kml_file.getvalue())
         tmp_path = tmp.name
 
-    # Ler KML
     kml = gpd.read_file(tmp_path)
     os.unlink(tmp_path)
     
-    # Garantir WGS84
     if kml.crs and kml.crs.to_epsg() != 4326:
         kml = kml.to_crs(4326)
     
     kml['geometry'] = kml['geometry'].apply(force_2d_geometry)
     kml_ee = geemap.geopandas_to_ee(kml)
 
-    # Filtrar Sentinel-2
     s2_col = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
               .filterBounds(kml_ee)
               .filterDate(data_inicio.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
@@ -104,7 +94,6 @@ def processar_ndvi(kml_file, data_inicio, data_fim, limite_nuvens):
 # --- INTERFACE ---
 st.markdown('<h1 class="main-header">🌿 NDVI Mapper</h1>', unsafe_allow_html=True)
 
-# Sidebar
 st.sidebar.title("⚙️ Configurações")
 uploaded_file = st.sidebar.file_uploader("📁 Upload KML", type="kml")
 col_d1, col_d2 = st.sidebar.columns(2)
@@ -131,15 +120,14 @@ if st.sidebar.button("🚀 GERAR MAPA NDVI", type="primary", use_container_width
                 # --- CONFIGURAÇÃO DO MAPA ---
                 Map = geemap.Map()
                 Map.centerObject(kml_ee, 14)
-                
-                # Adicionamos as camadas
                 Map.addLayer(recent_image, {'bands': ['B4', 'B3', 'B2'], 'max': 3000}, 'RGB (Natural)')
                 Map.addLayer(ndvi, {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}, 'NDVI')
                 Map.addLayer(kml_ee, {'color': '0000FF'}, 'Área KML')
                 
-                # EXIBIÇÃO ROBUSTA COM ST_FOLIUM
-                # Resolve o erro de "Invalid URL" no console do navegador
-                st_folium(Map, width=1000, height=600, returned_objects=[])
+                # --- NOVO MÉTODO DE EXIBIÇÃO (HTML) ---
+                # Esta é a forma mais segura quando componentes interativos falham
+                map_html = Map.to_html() 
+                components.html(map_html, height=600)
                 
             else:
                 st.error("Nenhuma imagem sem nuvens encontrada no período.")
