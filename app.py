@@ -25,7 +25,7 @@ def authenticate_ee():
         else:
             ee.Initialize()
     except Exception as e:
-        st.error(f"Erro na autenticação do Earth Engine: {e}")
+        st.error(f"Erro na autenticação: {e}")
         st.stop()
 
 authenticate_ee()
@@ -33,22 +33,20 @@ authenticate_ee()
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="🌿 NDVI Mapper Pro", page_icon="🌿", layout="wide")
 
+# --- FUNÇÕES DE APOIO ---
 def force_2d_geometry(geom):
     if getattr(geom, "has_z", False):
         return shapely.wkb.loads(shapely.wkb.dumps(geom, output_dimension=2))
     return geom
 
 def calcular_area_hectares(kml_ee):
-    """Calcula a área total do polígono em hectares"""
     area_m2 = kml_ee.geometry().area().getInfo()
     return area_m2 / 10000
 
 def gerar_zonas_manejo(ndvi_img, kml_ee, n_clusters=3):
-    """Cria zonas de manejo usando o algoritmo K-Means"""
     training = ndvi_img.sample(region=kml_ee.geometry(), scale=10, numPixels=1000)
     clusterer = ee.Clusterer.wekaKMeans(n_clusters).train(training)
     result = ndvi_img.cluster(clusterer)
-    
     pixel_area = ee.Image.pixelArea()
     areas_lista = []
     for i in range(n_clusters):
@@ -57,11 +55,9 @@ def gerar_zonas_manejo(ndvi_img, kml_ee, n_clusters=3):
             reducer=ee.Reducer.sum(), geometry=kml_ee, scale=10, maxPixels=1e9
         ).get('area')
         areas_lista.append(ee.Number(area_z).divide(10000).getInfo())
-    
     return result, areas_lista
 
 def gerar_series_temporais_completas(s2_col, kml_ee):
-    """Extrai médias de NDVI, EVI e NDWI para o gráfico"""
     def extrair_indices(img):
         ndvi_img = img.normalizedDifference(['B8', 'B4']).rename('NDVI')
         evi_img = img.expression('2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', 
@@ -70,7 +66,6 @@ def gerar_series_temporais_completas(s2_col, kml_ee):
         combined = img.addBands([ndvi_img, evi_img, ndwi_img])
         stats = combined.reduceRegion(reducer=ee.Reducer.mean(), geometry=kml_ee, scale=10, maxPixels=1e9)
         return ee.Feature(None, {'date': img.date().format('yyyy-MM-dd'), 'NDVI': stats.get('NDVI'), 'EVI': stats.get('EVI'), 'NDWI': stats.get('NDWI')})
-
     serie_features = s2_col.map(extrair_indices).getInfo()
     data_list = [f['properties'] for f in serie_features['features']]
     if not data_list: return pd.DataFrame()
@@ -90,7 +85,8 @@ def processar_indices(kml_file, data_inicio, data_fim, limite_nuvens):
     s2_col = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED').filterBounds(kml_ee)
               .filterDate(data_inicio.strftime('%Y-%m-%d'), data_fim.strftime('%Y-%m-%d'))
               .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', limite_nuvens)).sort('system:time_start', False))
-    if s2_col.size().getInfo() == 0: return None, None, None, None, None, None, 0, None
+    if s2_col.size().getInfo() == 0: return None
+    
     recent_image = s2_col.first().clip(kml_ee)
     ndvi = recent_image.normalizedDifference(['B8', 'B4']).rename('NDVI')
     evi = recent_image.expression('2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', 
@@ -98,16 +94,19 @@ def processar_indices(kml_file, data_inicio, data_fim, limite_nuvens):
     ndwi = recent_image.normalizedDifference(['B8', 'B11']).rename('NDWI')
     stats = ndvi.reduceRegion(reducer=ee.Reducer.mean().combine(reducer2=ee.Reducer.minMax(), sharedInputs=True), 
                                geometry=kml_ee, scale=10, maxPixels=1e9).getInfo()
-    return kml_ee, ndvi, evi, ndwi, recent_image, stats, s2_col.size().getInfo(), s2_col
+    
+    return {
+        'kml_ee': kml_ee, 'ndvi': ndvi, 'evi': evi, 'ndwi': ndwi, 
+        'img_real': recent_image, 'stats': stats, 'count': s2_col.size().getInfo(), 's2_col': s2_col
+    }
 
-# --- INTERFACE STREAMLIT ---
+# --- INTERFACE ---
 st.markdown('<h1 style="text-align: center; color: #2E7D32;">🌿 NDVI Mapper Pro</h1>', unsafe_allow_html=True)
 
 st.sidebar.title("⚙️ Configurações")
 uploaded_file = st.sidebar.file_uploader("📁 Upload KML", type="kml")
-
-indice_opcoes = {"NDVI (Vigor Geral)": "NDVI", "EVI (Cultura Densa)": "EVI", "NDWI (Umidade/Água)": "NDWI", "RGB (Foto Real)": "RGB"}
-selecao = st.sidebar.selectbox("📊 Selecione o Índice para Análise", list(indice_opcoes.keys()))
+indice_opcoes = {"NDVI (Vigor)": "NDVI", "EVI (Densidade)": "EVI", "NDWI (Umidade)": "NDWI", "RGB (Real)": "RGB"}
+selecao = st.sidebar.selectbox("📊 Índice do Mapa", list(indice_opcoes.keys()))
 id_indice = indice_opcoes[selecao]
 
 col_d1, col_d2 = st.sidebar.columns(2)
@@ -115,72 +114,60 @@ data_fim = col_d2.date_input("📅 Fim", value=datetime.now().date())
 data_inicio = col_d1.date_input("📅 Início", value=datetime.now().date() - timedelta(days=90))
 limite_nuvens = st.sidebar.slider("☁️ Limite Nuvens (%)", 0, 100, 36)
 
+# Execução do Processamento
 if st.sidebar.button("🚀 GERAR ANÁLISE COMPLETA", type="primary", use_container_width=True):
     if uploaded_file:
-        with st.spinner("🔄 Processando dados satelitais..."):
-            kml_ee, ndvi, evi, ndwi, img_real, stats, count, s2_col = processar_indices(
-                uploaded_file, data_inicio, data_fim, limite_nuvens
-            )
-            
-            if kml_ee:
-                area_ha = calcular_area_hectares(kml_ee)
-                centroid = kml_ee.geometry().centroid().coordinates().getInfo()
-                
-                # --- MÉTRICAS ---
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Área Total (ha)", f"{area_ha:.2f}")
-                c2.metric("Imagens", count)
-                c3.metric("NDVI Médio", round(stats.get('NDVI_mean', 0), 3))
-                c4.metric("NDVI Máximo", round(stats.get('NDVI_max', 0), 3))
-
-                st.divider()
-
-                # --- ABAS PARA ORGANIZAÇÃO E ESTABILIDADE ---
-                tab1, tab2 = st.tabs(["🔍 Monitoramento e Histórico", "🎯 Zoneamento de Manejo"])
-
-                with tab1:
-                    st.subheader(f"🗺️ Mapa Atual: {selecao}")
-                    m = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
-                    folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
-                                     attr='Google', name='Google Satellite').add_to(m)
-
-                    def add_ee_layer(ee_object, vis_params, name, target_map):
-                        map_id_dict = ee.Image(ee_object).getMapId(vis_params)
-                        folium.raster_layers.TileLayer(tiles=map_id_dict['tile_fetcher'].url_format, 
-                                                       attr='Google Earth Engine', name=name, overlay=True).add_to(target_map)
-
-                    if id_indice == "NDVI": add_ee_layer(ndvi, {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}, 'NDVI', m)
-                    elif id_indice == "EVI": add_ee_layer(evi, {'min': 0, 'max': 1, 'palette': ['blue', 'yellow', 'green']}, 'EVI', m)
-                    elif id_indice == "NDWI": add_ee_layer(ndwi, {'min': -1, 'max': 1, 'palette': ['brown', 'white', 'blue']}, 'NDWI', m)
-                    else: add_ee_layer(img_real, {'bands': ['B4', 'B3', 'B2'], 'max': 3000}, 'RGB Real', m)
-                    
-                    st_folium(m, width=1100, height=450, key="mapa_principal")
-
-                    st.subheader("📈 Série Temporal")
-                    df_hist = gerar_series_temporais_completas(s2_col, kml_ee)
-                    if not df_hist.empty and id_indice != "RGB":
-                        cores = {"NDVI": "#2E7D32", "EVI": "#1976D2", "NDWI": "#5D4037"}
-                        fig = px.line(df_hist, x='date', y=id_indice, markers=True, template="plotly_white", 
-                                      color_discrete_sequence=[cores.get(id_indice, "#2E7D32")])
-                        fig.update_layout(yaxis_range=[-1,1] if id_indice=="NDWI" else [0,1], hovermode="x unified")
-                        st.plotly_chart(fig, use_container_width=True)
-
-                with tab2:
-                    st.subheader("🎯 Zonas de Manejo (Taxa Variável)")
-                    with st.spinner("🤖 Calculando zonas por K-Means..."):
-                        zonas_img, areas_z = gerar_zonas_manejo(ndvi, kml_ee)
-                        
-                        cz1, cz2, cz3 = st.columns(3)
-                        cz1.success(f"🟢 Zona A (Alta): {areas_z[0]:.2f} ha")
-                        cz2.warning(f"🟡 Zona B (Média): {areas_z[1]:.2f} ha")
-                        cz3.error(f"🔴 Zona C (Baixa): {areas_z[2]:.2f} ha")
-
-                        m2 = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
-                        folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
-                                         attr='Google', name='Google Satellite').add_to(m2)
-                        add_ee_layer(zonas_img, {'min': 0, 'max': 2, 'palette': ['#2E7D32', '#FBC02D', '#D32F2F']}, 'Zonas', m2)
-                        st_folium(m2, width=1100, height=450, key="mapa_zonas")
+        with st.spinner("🔄 Processando..."):
+            resultado = processar_indices(uploaded_file, data_inicio, data_fim, limite_nuvens)
+            if resultado:
+                st.session_state['dados'] = resultado
             else:
-                st.error("Nenhuma imagem encontrada para os critérios selecionados.")
+                st.error("Nenhuma imagem encontrada.")
     else:
-        st.warning("Por favor, faça o upload de um arquivo KML.")
+        st.warning("Faça o upload do KML.")
+
+# --- EXIBIÇÃO DOS RESULTADOS (Recuperando da Session State) ---
+if 'dados' in st.session_state:
+    d = st.session_state['dados']
+    area_ha = calcular_area_hectares(d['kml_ee'])
+    centroid = d['kml_ee'].geometry().centroid().coordinates().getInfo()
+
+    # MÉTRICAS
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Área (ha)", f"{area_ha:.2f}")
+    c2.metric("Imagens", d['count'])
+    c3.metric("NDVI Médio", round(d['stats'].get('NDVI_mean', 0), 3))
+    c4.metric("NDVI Máximo", round(d['stats'].get('NDVI_max', 0), 3))
+
+    st.divider()
+
+    tab1, tab2 = st.tabs(["🔍 Monitoramento", "🎯 Zoneamento"])
+
+    with tab1:
+        m = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
+        folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google', name='Satellite').add_to(m)
+
+        def add_layer(obj, vis, name, m_obj):
+            map_id = ee.Image(obj).getMapId(vis)
+            folium.raster_layers.TileLayer(tiles=map_id['tile_fetcher'].url_format, attr='EE', name=name, overlay=True).add_to(m_obj)
+
+        if id_indice == "NDVI": add_layer(d['ndvi'], {'min':0,'max':1,'palette':['red','yellow','green']}, 'NDVI', m)
+        elif id_indice == "EVI": add_layer(d['evi'], {'min':0,'max':1,'palette':['blue','yellow','green']}, 'EVI', m)
+        elif id_indice == "NDWI": add_layer(d['ndwi'], {'min':-1,'max':1,'palette':['brown','white','blue']}, 'NDWI', m)
+        else: add_layer(d['img_real'], {'bands':['B4','B3','B2'],'max':3000}, 'RGB', m)
+        
+        st_folium(m, width=1100, height=450, key="mapa_1")
+
+        df_hist = gerar_series_temporais_completas(d['s2_col'], d['kml_ee'])
+        if not df_hist.empty and id_indice != "RGB":
+            fig = px.line(df_hist, x='date', y=id_indice, markers=True, template="plotly_white")
+            st.plotly_chart(fig, use_container_width=True)
+
+    with tab2:
+        zonas_img, areas_z = gerar_zonas_manejo(d['ndvi'], d['kml_ee'])
+        cz1, cz2, cz3 = st.columns(3)
+        cz1.success(f"🟢 Alta: {areas_z[0]:.2f} ha")
+        cz2.warning(f"🟡 Média: {areas_z[1]:.2f} ha")
+        cz3.error(f"🔴 Baixa: {areas_z[2]:.2f} ha")
+
+        m2 = folium.Map(location=[centroid[1], centroid[0]], zoom
