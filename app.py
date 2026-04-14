@@ -51,7 +51,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data
 def force_2d_geometry(geom):
     """Remove coordenada Z das geometrias"""
     if getattr(geom, "has_z", False):
