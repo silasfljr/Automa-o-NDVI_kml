@@ -2,4 +2,7 @@ streamlit
 earthengine-api
 geemap
 geopandas
-shapely
+folium
+streamlit-folium
+plotly
+pandas
