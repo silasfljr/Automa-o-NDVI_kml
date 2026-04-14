@@ -46,12 +46,11 @@ def force_2d_geometry(geom):
 
 def calcular_area_hectares(kml_ee):
     """Calcula a área da geometria em hectares"""
-    # O Earth Engine calcula a área em metros quadrados por padrão
     area_m2 = kml_ee.geometry().area().getInfo()
-    area_ha = area_m2 / 10000  # Convertendo para hectares
-    return area_ha
+    return area_m2 / 10000
 
 def gerar_serie_temporal(s2_col, kml_ee):
+    """Extrai o NDVI médio para o gráfico histórico"""
     def extrair_media(img):
         ndvi_img = img.normalizedDifference(['B8', 'B4']).rename('NDVI')
         stats = ndvi_img.reduceRegion(
@@ -73,10 +72,9 @@ def gerar_serie_temporal(s2_col, kml_ee):
         
     df = pd.DataFrame(data_list)
     df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date')
-    return df
+    return df.sort_values('date')
 
-def processar_ndvi(kml_file, data_inicio, data_fim, limite_nuvens):
+def processar_indices(kml_file, data_inicio, data_fim, limite_nuvens):
     with tempfile.NamedTemporaryFile(suffix='.kml', delete=False) as tmp:
         tmp.write(kml_file.getvalue())
         tmp_path = tmp.name
@@ -96,19 +94,31 @@ def processar_ndvi(kml_file, data_inicio, data_fim, limite_nuvens):
               .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', limite_nuvens))
               .sort('system:time_start', False))
 
-    img_count = s2_col.size().getInfo()
-    if img_count == 0:
-        return None, None, None, None, 0, None
+    if s2_col.size().getInfo() == 0:
+        return None, None, None, None, None, None, 0, None
 
     recent_image = s2_col.first().clip(kml_ee)
+    
+    # 1. NDVI (Vigor)
     ndvi = recent_image.normalizedDifference(['B8', 'B4']).rename('NDVI')
+    
+    # 2. EVI (Densidade - corrigido para saturação)
+    evi = recent_image.expression(
+        '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {
+            'NIR': recent_image.select('B8'),
+            'RED': recent_image.select('B4'),
+            'BLUE': recent_image.select('B2')
+        }).rename('EVI')
+    
+    # 3. NDWI (Umidade/Estresse Hídrico)
+    ndwi = recent_image.normalizedDifference(['B8', 'B11']).rename('NDWI')
 
     ndvi_stats = ndvi.reduceRegion(
         reducer=ee.Reducer.mean().combine(reducer2=ee.Reducer.minMax(), sharedInputs=True), 
         geometry=kml_ee, scale=10, maxPixels=1e9
     ).getInfo()
 
-    return kml_ee, ndvi, recent_image, ndvi_stats, img_count, s2_col
+    return kml_ee, ndvi, evi, ndwi, recent_image, ndvi_stats, s2_col.size().getInfo(), s2_col
 
 # --- INTERFACE ---
 st.markdown('<h1 class="main-header">🌿 NDVI Mapper Pro</h1>', unsafe_allow_html=True)
@@ -122,30 +132,31 @@ limite_nuvens = st.sidebar.slider("☁️ Limite Nuvens (%)", 0, 100, 36)
 
 if st.sidebar.button("🚀 GERAR ANÁLISE COMPLETA", type="primary", use_container_width=True):
     if uploaded_file:
-        with st.spinner("🔄 Processando dados satelitais e área..."):
-            kml_ee, ndvi, recent_image, ndvi_stats, img_count, s2_col = processar_ndvi(
+        with st.spinner("🔄 Processando múltiplos índices e área..."):
+            kml_ee, ndvi, evi, ndwi, img_real, stats, count, s2_col = processar_indices(
                 uploaded_file, data_inicio, data_fim, limite_nuvens
             )
             
             if kml_ee:
-                # Cálculo da área total
-                area_total = calcular_area_hectares(kml_ee)
-
-                # --- MÉTRICAS (Agora com 4 colunas) ---
+                area_ha = calcular_area_hectares(kml_ee)
+                
+                # --- MÉTRICAS ---
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Área Total (ha)", f"{area_total:.2f}")
-                c2.metric("Imagens Analisadas", img_count)
-                c3.metric("NDVI Médio (Atual)", round(ndvi_stats.get('NDVI_mean', 0), 3))
-                c4.metric("NDVI Máx (Atual)", round(ndvi_stats.get('NDVI_max', 0), 3))
+                c1.metric("Área Total (ha)", f"{area_ha:.2f}")
+                c2.metric("Imagens", count)
+                c3.metric("NDVI Médio", round(stats.get('NDVI_mean', 0), 3))
+                c4.metric("NDVI Máximo", round(stats.get('NDVI_max', 0), 3))
 
                 st.divider()
 
-                # --- MAPA (FOLIUM) ---
-                st.subheader("🗺️ Mapa de Vigor Vegetativo")
+                # --- MAPA ---
+                st.subheader("🗺️ Painel de Monitoramento Multiespectral")
                 centroid = kml_ee.geometry().centroid().coordinates().getInfo()
                 m = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
+                
+                # Fundo Satélite Google
                 folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
-                                 attr='Google', name='Google Satellite').add_to(m)
+                                 attr='Google', name='Google Satellite', overlay=False).add_to(m)
 
                 def add_ee_layer(ee_object, vis_params, name):
                     map_id_dict = ee.Image(ee_object).getMapId(vis_params)
@@ -154,34 +165,24 @@ if st.sidebar.button("🚀 GERAR ANÁLISE COMPLETA", type="primary", use_contain
                         attr='Google Earth Engine', name=name, overlay=True, control=True
                     ).add_to(m)
 
-                add_ee_layer(recent_image, {'bands': ['B4', 'B3', 'B2'], 'max': 3000}, 'RGB Natural')
-                add_ee_layer(ndvi, {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}, 'NDVI')
+                add_ee_layer(img_real, {'bands': ['B4', 'B3', 'B2'], 'max': 3000}, '1. Foto Real (RGB)')
+                add_ee_layer(ndvi, {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}, '2. NDVI (Vigor Geral)')
+                add_ee_layer(evi, {'min': 0, 'max': 1, 'palette': ['blue', 'yellow', 'green']}, '3. EVI (Cultura Densa)')
+                add_ee_layer(ndwi, {'min': -1, 'max': 1, 'palette': ['brown', 'white', 'blue']}, '4. NDWI (Umidade/Água)')
                 
+                folium.LayerControl().add_to(m)
                 st_folium(m, width=1100, height=500, returned_objects=[])
 
                 st.divider()
 
-                # --- GRÁFICO DE SÉRIE TEMPORAL ---
-                st.subheader("📈 Evolução do NDVI no Período")
-                with st.spinner("📊 Calculando série histórica..."):
-                    df_historico = gerar_serie_temporal(s2_col, kml_ee)
-                    
-                    if not df_historico.empty:
-                        fig = px.line(df_historico, x='date', y='NDVI', 
-                                      markers=True,
-                                      template="plotly_white",
-                                      color_discrete_sequence=['#2E7D32'])
-                        fig.update_layout(
-                            hovermode="x unified",
-                            xaxis_title="Data da Captura",
-                            yaxis_title="NDVI Médio",
-                            yaxis_range=[0, 1]
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.warning("Não foi possível extrair dados para o gráfico histórico.")
-                
+                # --- GRÁFICO ---
+                st.subheader("📈 Histórico de Vigor (NDVI)")
+                df_hist = gerar_serie_temporal(s2_col, kml_ee)
+                if not df_hist.empty:
+                    fig = px.line(df_hist, x='date', y='NDVI', markers=True, template="plotly_white", color_discrete_sequence=['#2E7D32'])
+                    fig.update_layout(yaxis_range=[0, 1], hovermode="x unified")
+                    st.plotly_chart(fig, use_container_width=True)
             else:
                 st.error("Nenhuma imagem encontrada.")
     else:
-        st.warning("Por favor, faça o upload de um arquivo KML.")
+        st.warning("Aguardando arquivo KML...")
