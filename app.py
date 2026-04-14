@@ -44,8 +44,14 @@ def force_2d_geometry(geom):
         return shapely.wkb.loads(shapely.wkb.dumps(geom, output_dimension=2))
     return geom
 
+def calcular_area_hectares(kml_ee):
+    """Calcula a área da geometria em hectares"""
+    # O Earth Engine calcula a área em metros quadrados por padrão
+    area_m2 = kml_ee.geometry().area().getInfo()
+    area_ha = area_m2 / 10000  # Convertendo para hectares
+    return area_ha
+
 def gerar_serie_temporal(s2_col, kml_ee):
-    """Extrai o NDVI médio de cada imagem na coleção para gerar o gráfico"""
     def extrair_media(img):
         ndvi_img = img.normalizedDifference(['B8', 'B4']).rename('NDVI')
         stats = ndvi_img.reduceRegion(
@@ -116,21 +122,25 @@ limite_nuvens = st.sidebar.slider("☁️ Limite Nuvens (%)", 0, 100, 36)
 
 if st.sidebar.button("🚀 GERAR ANÁLISE COMPLETA", type="primary", use_container_width=True):
     if uploaded_file:
-        with st.spinner("🔄 Processando dados satelitais..."):
+        with st.spinner("🔄 Processando dados satelitais e área..."):
             kml_ee, ndvi, recent_image, ndvi_stats, img_count, s2_col = processar_ndvi(
                 uploaded_file, data_inicio, data_fim, limite_nuvens
             )
             
             if kml_ee:
-                # 1. MÉTRICAS
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Imagens Analisadas", img_count)
-                c2.metric("NDVI Médio (Atual)", round(ndvi_stats.get('NDVI_mean', 0), 3))
-                c3.metric("NDVI Máx (Atual)", round(ndvi_stats.get('NDVI_max', 0), 3))
+                # Cálculo da área total
+                area_total = calcular_area_hectares(kml_ee)
+
+                # --- MÉTRICAS (Agora com 4 colunas) ---
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Área Total (ha)", f"{area_total:.2f}")
+                c2.metric("Imagens Analisadas", img_count)
+                c3.metric("NDVI Médio (Atual)", round(ndvi_stats.get('NDVI_mean', 0), 3))
+                c4.metric("NDVI Máx (Atual)", round(ndvi_stats.get('NDVI_max', 0), 3))
 
                 st.divider()
 
-                # 2. MAPA (FOLIUM)
+                # --- MAPA (FOLIUM) ---
                 st.subheader("🗺️ Mapa de Vigor Vegetativo")
                 centroid = kml_ee.geometry().centroid().coordinates().getInfo()
                 m = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
@@ -151,7 +161,7 @@ if st.sidebar.button("🚀 GERAR ANÁLISE COMPLETA", type="primary", use_contain
 
                 st.divider()
 
-                # 3. GRÁFICO DE SÉRIE TEMPORAL
+                # --- GRÁFICO DE SÉRIE TEMPORAL ---
                 st.subheader("📈 Evolução do NDVI no Período")
                 with st.spinner("📊 Calculando série histórica..."):
                     df_historico = gerar_serie_temporal(s2_col, kml_ee)
@@ -172,6 +182,6 @@ if st.sidebar.button("🚀 GERAR ANÁLISE COMPLETA", type="primary", use_contain
                         st.warning("Não foi possível extrair dados para o gráfico histórico.")
                 
             else:
-                st.error("Nenhuma imagem encontrada para os critérios selecionados.")
+                st.error("Nenhuma imagem encontrada.")
     else:
         st.warning("Por favor, faça o upload de um arquivo KML.")
