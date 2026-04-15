@@ -11,29 +11,158 @@ from datetime import datetime, timedelta
 import folium
 from streamlit_folium import st_folium
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
 
-# --- AUTENTICAÇÃO EARTH ENGINE ---
-def authenticate_ee():
-    try:
-        if 'EE_KEYS' in st.secrets:
-            ee_key_dict = json.loads(st.secrets['EE_KEYS'])
-            credentials = ee.ServiceAccountCredentials(
-                ee_key_dict['client_email'], 
-                key_data=st.secrets['EE_KEYS']
-            )
-            ee.Initialize(credentials)
-        else:
-            ee.Initialize()
-    except Exception as e:
-        st.error(f"Erro na autenticação: {e}")
-        st.stop()
+# --- CSS PROFISSIONAL ---
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    .main-header {
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: 3.5rem;
+        background: linear-gradient(135deg, #2E7D32 0%, #4CAF50 50%, #66BB6A 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-align: center;
+        margin-bottom: 1rem;
+        animation: fadeIn 1s ease-in;
+    }
+    
+    .subtitle {
+        font-family: 'Inter', sans-serif;
+        font-weight: 400;
+        font-size: 1.3rem;
+        color: #546E7A;
+        text-align: center;
+        margin-bottom: 3rem;
+    }
+    
+    .metric-container {
+        background: linear-gradient(145deg, #FFFFFF 0%, #F8F9FA 100%);
+        padding: 1.5rem;
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        border: 1px solid #E0E6ED;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .metric-container:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+    }
+    
+    .metric-value {
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: 2rem;
+        color: #2E7D32;
+        margin: 0;
+    }
+    
+    .metric-label {
+        font-family: 'Inter', sans-serif;
+        font-weight: 500;
+        font-size: 0.9rem;
+        color: #6C757D;
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    .sidebar .sidebar-content {
+        background: linear-gradient(180deg, #F8F9FA 0%, #E9ECEF 100%);
+    }
+    
+    .stButton > button {
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        border-radius: 12px;
+        border: none;
+        padding: 12px 24px;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    }
+    
+    .primary-button {
+        background: linear-gradient(135deg, #2E7D32 0%, #4CAF50 100%) !important;
+        color: white !important;
+    }
+    
+    .tab-header {
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        font-size: 1.4rem;
+        color: #2E7D32;
+        margin-bottom: 1.5rem;
+    }
+    
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .fade-in {
+        animation: fadeIn 0.8s ease-out;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-authenticate_ee()
+# --- HEADER PREMIUM ---
+def render_header():
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown('<h1 class="main-header">🌿 NDVI Mapper Pro</h1>', unsafe_allow_html=True)
+        st.markdown('<p class="subtitle">Monitoramento Avançado de Vegetação com Inteligência Artificial e Sensoriamento Remoto</p>', unsafe_allow_html=True)
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="🌿 NDVI Mapper Pro", page_icon="🌿", layout="wide")
+# --- MÉTRICAS PREMIUM ---
+def render_metrics(data_dict, area_ha):
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown("""
+        <div class="metric-container">
+            <p class="metric-label">Área Analisada</p>
+            <p class="metric-value">{:.1f} ha</p>
+        </div>
+        """.format(area_ha), unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="metric-container">
+            <p class="metric-label">Imagens Processadas</p>
+            <p class="metric-value">{}</p>
+        </div>
+        """.format(data_dict['count']), unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class="metric-container">
+            <p class="metric-label">NDVI Médio</p>
+            <p class="metric-value">{:.3f}</p>
+        </div>
+        """.format(data_dict['stats'].get('NDVI_mean', 0)), unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown("""
+        <div class="metric-container">
+            <p class="metric-label">NDVI Máximo</p>
+            <p class="metric-value">{:.3f}</p>
+        </div>
+        """.format(data_dict['stats'].get('NDVI_max', 0)), unsafe_allow_html=True)
 
-# --- FUNÇÕES DE PROCESSAMENTO ---
+# --- FUNÇÕES EXISTENTES (mantidas iguais) ---
 def force_2d_geometry(geom):
     if getattr(geom, "has_z", False):
         return shapely.wkb.loads(shapely.wkb.dumps(geom, output_dimension=2))
@@ -44,7 +173,6 @@ def calcular_area_hectares(kml_ee):
     return area_m2 / 10000
 
 def gerar_zonas_manejo(ndvi_img, kml_ee, n_clusters=3):
-    """Cria zonas de manejo usando o algoritmo K-Means"""
     training = ndvi_img.sample(region=kml_ee.geometry(), scale=10, numPixels=1000)
     clusterer = ee.Clusterer.wekaKMeans(n_clusters).train(training)
     result = ndvi_img.cluster(clusterer)
@@ -60,7 +188,6 @@ def gerar_zonas_manejo(ndvi_img, kml_ee, n_clusters=3):
     return result, areas_lista
 
 def gerar_series_temporais_completas(s2_col, kml_ee):
-    """Extrai médias de todos os índices para o gráfico"""
     def extrair_indices(img):
         ndvi_img = img.normalizedDifference(['B8', 'B4']).rename('NDVI')
         evi_img = img.expression('2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', 
@@ -78,7 +205,6 @@ def gerar_series_temporais_completas(s2_col, kml_ee):
     return df.sort_values('date')
 
 def processar_indices(kml_file, data_inicio, data_fim, limite_nuvens):
-    """Faz a busca pesada no Earth Engine e retorna um dicionário com tudo"""
     with tempfile.NamedTemporaryFile(suffix='.kml', delete=False) as tmp:
         tmp.write(kml_file.getvalue())
         tmp_path = tmp.name
@@ -107,85 +233,130 @@ def processar_indices(kml_file, data_inicio, data_fim, limite_nuvens):
         'img_real': recent_image, 'stats': stats, 'count': s2_col.size().getInfo(), 's2_col': s2_col
     }
 
-# --- INTERFACE ---
-st.markdown('<h1 style="text-align: center; color: #2E7D32;">🌿 NDVI Mapper Pro</h1>', unsafe_allow_html=True)
+# --- AUTENTICAÇÃO ---
+def authenticate_ee():
+    try:
+        ee.Initialize()
+    except Exception as e:
+        st.error(f"Erro na autenticação Earth Engine: {e}")
+        st.stop()
 
-st.sidebar.title("⚙️ Configurações")
-uploaded_file = st.sidebar.file_uploader("📁 Upload KML", type="kml")
-indice_opcoes = {"NDVI (Vigor)": "NDVI", "EVI (Densidade)": "EVI", "NDWI (Umidade)": "NDWI", "RGB (Real)": "RGB"}
-selecao = st.sidebar.selectbox("📊 Selecione o Índice para Visualizar", list(indice_opcoes.keys()))
-id_indice = indice_opcoes[selecao]
+authenticate_ee()
 
-col_d1, col_d2 = st.sidebar.columns(2)
-data_fim = col_d2.date_input("📅 Fim", value=datetime.now().date())
-data_inicio = col_d1.date_input("📅 Início", value=datetime.now().date() - timedelta(days=90))
-limite_nuvens = st.sidebar.slider("☁️ Limite Nuvens (%)", 0, 100, 36)
+# --- CONFIG PÁGINA ---
+st.set_page_config(page_title="🌿 NDVI Mapper Pro", page_icon="🌿", layout="wide")
 
-if st.sidebar.button("🚀 GERAR ANÁLISE COMPLETA", type="primary", use_container_width=True):
-    if uploaded_file:
-        with st.spinner("🔄 Processando dados multiespectrais..."):
-            resultado = processar_indices(uploaded_file, data_inicio, data_fim, limite_nuvens)
-            if resultado:
-                st.session_state['dados'] = resultado
-            else:
-                st.error("Nenhuma imagem encontrada.")
-    else:
-        st.warning("Faça o upload do arquivo KML.")
+# --- HEADER ---
+render_header()
 
-# --- EXIBIÇÃO DOS RESULTADOS (Sempre que houver dados na sessão) ---
+# --- SIDEBAR PREMIUM ---
+with st.sidebar:
+    st.markdown("## ⚙️ **Configurações Avançadas**")
+    
+    st.markdown("### 📁 **Arquivo KML**")
+    uploaded_file = st.file_uploader("Escolha seu KML", type="kml", help="Formato Google Earth")
+    
+    st.markdown("### 📊 **Índice Vegetacional**")
+    indice_opcoes = {"🌿 NDVI (Vigor Vegetal)": "NDVI", "🌱 EVI (Densidade)": "EVI", "💧 NDWI (Umidade)": "NDWI", "🛰️ RGB Real": "RGB"}
+    selecao = st.selectbox("Visualizar", list(indice_opcoes.keys()), index=0)
+    id_indice = indice_opcoes[selecao]
+    
+    st.markdown("### 📅 **Período de Análise**")
+    col_d1, col_d2 = st.columns(2)
+    data_fim = col_d2.date_input("Data Final", value=datetime.now().date())
+    data_inicio = col_d1.date_input("Data Inicial", value=datetime.now().date() - timedelta(days=90))
+    
+    st.markdown("### ☁️ **Filtro de Nuvens**")
+    limite_nuvens = st.slider("Máximo %", 0, 100, 20)
+    
+    if st.button("🚀 **GERAR ANÁLISE COMPLETA**", type="primary", use_container_width=True, help="Processa todos os dados no Earth Engine"):
+        if uploaded_file:
+            with st.spinner("🔄 Analisando imagens Sentinel-2..."):
+                resultado = processar_indices(uploaded_file, data_inicio, data_fim, limite_nuvens)
+                if resultado:
+                    st.session_state['dados'] = resultado
+                    st.success("✅ Análise concluída!")
+                else:
+                    st.error("❌ Nenhuma imagem válida encontrada.")
+        else:
+            st.warning("⚠️ Faça upload do KML primeiro.")
+
+# --- RESULTADOS ---
 if 'dados' in st.session_state:
     d = st.session_state['dados']
     area_ha = calcular_area_hectares(d['kml_ee'])
     centroid = d['kml_ee'].geometry().centroid().coordinates().getInfo()
-
-    # MÉTRICAS RÁPIDAS
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Área (ha)", f"{area_ha:.2f}")
-    c2.metric("Imagens", d['count'])
-    c3.metric("NDVI Médio", round(d['stats'].get('NDVI_mean', 0), 3))
-    c4.metric("NDVI Máximo", round(d['stats'].get('NDVI_max', 0), 3))
-
+    
+    # MÉTRICAS
+    st.markdown("### 📊 **Dashboard Executivo**")
+    render_metrics(d, area_ha)
+    
     st.divider()
-
-    tab1, tab2 = st.tabs(["🔍 Monitoramento Multiespectral", "🎯 Zoneamento de Manejo"])
-
+    
+    # TABS PREMIUM
+    tab1, tab2, tab3 = st.tabs(["🛰️ **Monitoramento Multiespectral**", "🎯 **Zoneamento Inteligente**", "📈 **Série Temporal Completa**"])
+    
     with tab1:
-        st.subheader(f"Exibindo Mapa de {selecao}")
-        m1 = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
-        folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google', name='Satellite').add_to(m1)
-
+        st.markdown('<h3 class="tab-header">Mapa Interativo</h3>', unsafe_allow_html=True)
+        
+        m1 = folium.Map(location=[centroid[1], centroid[0]], zoom_start=15, tiles=None)
+        folium.TileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', 
+                        attr='Google Satellite', name='Satélite').add_to(m1)
+        
         def add_layer(obj, vis, name, m_obj):
             map_id = ee.Image(obj).getMapId(vis)
-            folium.raster_layers.TileLayer(tiles=map_id['tile_fetcher'].url_format, attr='EE', name=name, overlay=True).add_to(m_obj)
-
-        # Camada do mapa dinâmica conforme a barra lateral
-        if id_indice == "NDVI": add_layer(d['ndvi'], {'min':0,'max':1,'palette':['red','yellow','green']}, 'NDVI', m1)
-        elif id_indice == "EVI": add_layer(d['evi'], {'min':0,'max':1,'palette':['blue','yellow','green']}, 'EVI', m1)
-        elif id_indice == "NDWI": add_layer(d['ndwi'], {'min':-1,'max':1,'palette':['brown','white','blue']}, 'NDWI', m1)
+            folium.raster_layers.TileLayer(
+                tiles=map_id['tile_fetcher'].url_format, 
+                attr='Google Earth Engine', 
+                name=name, 
+                overlay=True,
+                control=True
+            ).add_to(m_obj)
+        
+        # Camada dinâmica
+        vis_params = {
+            'NDVI': {'min':0,'max':1,'palette':['#d73027','#f46d43','#fdae61','#fee08b','#d9ef8b','#a6d96a','#66bd63','#1a9850']},
+            'EVI': {'min':0,'max':1,'palette':['#4575b4','#74add1','#abd9e9','#e0f3f8','#ffffbf','#fee090','#fdae61','#f46d43','#d73027']},
+            'NDWI': {'min':-0.5,'max':0.5,'palette':['#d7191c','#fdae61','#ffffbf','#abdda4','#2b83ba']}
+        }
+        
+        if id_indice == "NDVI": add_layer(d['ndvi'], vis_params['NDVI'], 'NDVI', m1)
+        elif id_indice == "EVI": add_layer(d['evi'], vis_params['EVI'], 'EVI', m1)
+        elif id_indice == "NDWI": add_layer(d['ndwi'], vis_params['NDWI'], 'NDWI', m1)
         else: add_layer(d['img_real'], {'bands':['B4','B3','B2'],'max':3000}, 'RGB Real', m1)
         
-        # A key dinâmica "mapa_" + id_indice resolve o bug de não atualizar
-        st_folium(m1, width=1100, height=450, key=f"mapa_principal_{id_indice}")
-
-        st.subheader("📈 Histórico do Talhão")
-        df_hist = gerar_series_temporais_completas(d['s2_col'], d['kml_ee'])
-        if not df_hist.empty and id_indice != "RGB":
-            # Gráfico muda conforme o índice selecionado
-            fig = px.line(df_hist, x='date', y=id_indice, markers=True, template="plotly_white", title=f"Evolução de {id_indice}")
-            fig.update_layout(yaxis_range=[-1,1] if id_indice=="NDWI" else [0,1])
-            st.plotly_chart(fig, use_container_width=True)
-
+        folium.LayerControl().add_to(m1)
+        st_folium(m1, width=1200, height=500, key=f"mapa_{id_indice}")
+    
     with tab2:
-        st.subheader("🎯 Zoneamento para Taxa Variável")
-        with st.spinner("Calculando agrupamentos..."):
+        st.markdown('<h3 class="tab-header">Zoneamento Automático K-Means</h3>', unsafe_allow_html=True)
+        
+        with st.spinner("Executando clusterização..."):
             zonas_img, areas_z = gerar_zonas_manejo(d['ndvi'], d['kml_ee'])
-            
-            cz1, cz2, cz3 = st.columns(3)
-            cz1.success(f"🟢 Zona Alta: {areas_z[0]:.2f} ha")
-            cz2.warning(f"🟡 Zona Média: {areas_z[1]:.2f} ha")
-            cz3.error(f"🔴 Zona Baixa: {areas_z[2]:.2f} ha")
-
-            m2 = folium.Map(location=[centroid[1], centroid[0]], zoom_start=14)
-            folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google', name='Satellite').add_to(m2)
-            add_layer(zonas_img, {'min':0,'max':2,'palette':['#2E7D32','#FBC02D','#D32F2F']}, 'Zonas de Manejo', m2)
-            st_folium(m2, width=1100, height=450, key="mapa_zonas_manejo_fixo")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("""
+            <div style='background: linear-gradient(135deg, #2E7D32, #4CAF50); color: white; padding: 1.5rem; border-radius: 15px; text-align: center;'>
+                <h3 style='margin: 0;'>🟢 Alta Produtividade</h3>
+                <h2 style='margin: 0; font-size: 2rem;'>{:.1f} ha</h2>
+            </div>
+            """.format(areas_z[0]), unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div style='background: linear-gradient(135deg, #FF9800, #FFB74D); color: white; padding: 1.5rem; border-radius: 15px; text-align: center;'>
+                <h3 style='margin: 0;'>🟡 Média</h3>
+                <h2 style='margin: 0; font-size: 2rem;'>{:.1f} ha</h2>
+            </div>
+            """.format(areas_z[1]), unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div style='background: linear-gradient(135deg, #F44336, #EF5350); color: white; padding: 1.5rem; border-radius: 15px; text-align: center;'>
+                <h3 style='margin: 0;'>🔴 Baixa Produtividade</h3>
+                <h2 style='margin: 0; font-size: 2rem;'>{:.1f} ha</h2>
+            </div>
+            """.format(areas_z[2]), unsafe_allow_html=True)
+        
+        m2 = folium
