@@ -31,7 +31,7 @@ def authenticate_ee():
 authenticate_ee()
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="🌿 NDVI Mapper Pro", page_icon="🌿", layout="wide")
+st.set_page_config(page_title="AgroIndex", page_icon="🌿", layout="wide")
 
 # --- FUNÇÕES DE PROCESSAMENTO ---
 def force_2d_geometry(geom):
