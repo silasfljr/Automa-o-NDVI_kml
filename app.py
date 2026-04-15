@@ -108,7 +108,7 @@ def processar_indices(kml_file, data_inicio, data_fim, limite_nuvens):
     }
 
 # --- INTERFACE ---
-st.markdown('<h1 style="text-align: center; color: #2E7D32;">🌿 NDVI Mapper Pro</h1>', unsafe_allow_html=True)
+st.markdown('<h1 style="text-align: center; color: #2E7D32;">🌿 AgroIndex</h1>', unsafe_allow_html=True)
 
 st.sidebar.title("⚙️ Configurações")
 uploaded_file = st.sidebar.file_uploader("📁 Upload KML", type="kml")
